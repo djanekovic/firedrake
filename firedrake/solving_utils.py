@@ -1,13 +1,16 @@
 import numpy
 
-import itertools
+from itertools import chain
 
 from pyop2 import op2
+import firedrake.functionspaceimpl as fsi
+from firedrake_configuration import get_config
 from firedrake import function, dmhooks
 from firedrake.exceptions import ConvergenceError
 from firedrake.petsc import PETSc
 from firedrake.formmanipulation import ExtractSubBlock
 from firedrake.utils import cached_property
+from firedrake.logging import warning
 
 
 def _make_reasons(reasons):
@@ -19,6 +22,78 @@ KSPReasons = _make_reasons(PETSc.KSP.ConvergedReason())
 
 
 SNESReasons = _make_reasons(PETSc.SNES.ConvergedReason())
+
+
+if get_config()["options"]["petsc_int_type"] == "int32":
+    DEFAULT_KSP_PARAMETERS = {"mat_type": "aij",
+                              "ksp_type": "preonly",
+                              "pc_type": "lu",
+                              "pc_factor_mat_solver_type": "mumps",
+                              "mat_mumps_icntl_14": 200}
+else:
+    # FIXME: which factorisation package to use in int64?
+    DEFAULT_KSP_PARAMETERS = {}
+
+
+def set_defaults(solver_parameters, arguments, *defaults):
+    """Set defaults for solver parameters.
+
+    :arg solver_parameters: dict of user solver parameters to override/extend defaults
+    :arg arguments: arguments for the bilinear form (need to know if we have a Real block).
+    :arg defaults: Any default sets of parameters to supply."""
+    if not (solver_parameters is None or len(solver_parameters) == 0):
+        # User configured something, don't use defaults at all.
+        # PETSc will supply some defaults for unset things, but that's
+        # fine.
+        return solver_parameters.copy()
+
+    parameters = dict(chain.from_iterable(d.items() for d in defaults))
+    if any(isinstance(V, fsi.RealFunctionSpace)
+           for V in chain.from_iterable(a.function_space() for a in arguments)):
+        test, trial = arguments
+        if test.function_space() != trial.function_space():
+            # Don't know what to do here. How did it happen?
+            raise ValueError("Can't generate defaults for non-square problems with real blocks")
+
+        fields = []
+        reals = []
+        for i, V_ in enumerate(test.function_space()):
+            if V_.ufl_element().family() == "Real":
+                reals.append(i)
+            else:
+                fields.append(i)
+        if len(fields) == 0:
+            # Just reals, GMRES+Jacobi
+            opts = {"ksp_type": "gmres",
+                    "pc_type": "jacobi"}
+            parameters.update(opts)
+        else:
+            warning("Real block detected, generating Schur complement elimination PC")
+            # Full Schur complement eliminating onto Real blocks.
+            opts = {"mat_type": "matfree",
+                    "ksp_type": "fgmres",
+                    "pc_type": "fieldsplit",
+                    "pc_fieldsplit_type": "schur",
+                    "pc_fieldsplit_schur_fact_type": "full",
+                    "pc_fieldsplit_0_fields": ",".join(map(str, fields)),
+                    "pc_fieldsplit_1_fields": ",".join(map(str, reals)),
+                    "fieldsplit_0": {
+                        "ksp_type": "preonly",
+                        "pc_type": "python",
+                        "pc_python_type": "firedrake.AssembledPC",
+                        "assembled": DEFAULT_KSP_PARAMETERS,
+                    },
+                    "fieldsplit_1": {
+                        "ksp_type": "gmres",
+                        "pc_type": "jacobi",
+                    }}
+            parameters.update(opts)
+        return parameters
+    else:
+        # We can assemble an AIJ matrix, factor it with a sparse
+        # direct method.
+        return parameters
+    return parameters
 
 
 def check_snes_convergence(snes):

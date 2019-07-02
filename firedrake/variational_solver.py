@@ -95,7 +95,19 @@ class NonlinearVariationalProblem(object):
 class NonlinearVariationalSolver(OptionsManager):
     r"""Solves a :class:`NonlinearVariationalProblem`."""
 
-    def __init__(self, problem, **kwargs):
+    DEFAULT_SNES_PARAMETERS = {"snes_type": "newtonls",
+                               "snes_linesearch_type": "basic"}
+
+    DEFAULT_KSP_PARAMETERS = solving_utils.DEFAULT_KSP_PARAMETERS
+
+    def __init__(self, problem, *, solver_parameters=None,
+                 options_prefix=None,
+                 nullspace=None,
+                 transpose_nullspace=None,
+                 near_nullspace=None,
+                 appctx=None,
+                 pre_jacobian_callback=None,
+                 pre_function_callback=None):
         r"""
         :arg problem: A :class:`NonlinearVariationalProblem` to solve.
         :kwarg nullspace: an optional :class:`.VectorSpaceBasis` (or
@@ -153,41 +165,22 @@ class NonlinearVariationalSolver(OptionsManager):
         """
         assert isinstance(problem, NonlinearVariationalProblem)
 
-        parameters = kwargs.get("solver_parameters")
-        if "parameters" in kwargs:
-            raise TypeError("Use solver_parameters, not parameters")
-        nullspace = kwargs.get("nullspace")
-        nullspace_T = kwargs.get("transpose_nullspace")
-        near_nullspace = kwargs.get("near_nullspace")
-        options_prefix = kwargs.get("options_prefix")
-        pre_j_callback = kwargs.get("pre_jacobian_callback")
-        pre_f_callback = kwargs.get("pre_function_callback")
+        solver_parameters = solving_utils.set_defaults(solver_parameters,
+                                                       problem.J.arguments(),
+                                                       self.DEFAULT_SNES_PARAMETERS,
+                                                       self.DEFAULT_KSP_PARAMETERS)
+        mat_type = solver_parameters.get("mat_type")
+        pmat_type = solver_parameters.get("pmat_type")
 
-        super(NonlinearVariationalSolver, self).__init__(parameters, options_prefix)
-
-        # Allow anything, interpret "matfree" as matrix_free.
-        mat_type = self.parameters.get("mat_type")
-        pmat_type = self.parameters.get("pmat_type")
-        matfree = mat_type == "matfree"
-        pmatfree = pmat_type == "matfree"
-
-        appctx = kwargs.get("appctx")
+        super().__init__(solver_parameters, options_prefix)
 
         ctx = solving_utils._SNESContext(problem,
                                          mat_type=mat_type,
                                          pmat_type=pmat_type,
                                          appctx=appctx,
-                                         pre_jacobian_callback=pre_j_callback,
-                                         pre_function_callback=pre_f_callback,
+                                         pre_jacobian_callback=pre_jacobian_callback,
+                                         pre_function_callback=pre_function_callback,
                                          options_prefix=self.options_prefix)
-
-        # No preconditioner by default for matrix-free
-        if (problem.Jp is not None and pmatfree) or matfree:
-            self.set_default_parameter("pc_type", "none")
-        elif ctx.is_mixed:
-            # Mixed problem, use jacobi pc if user has not supplied
-            # one.
-            self.set_default_parameter("pc_type", "jacobi")
 
         self.snes = PETSc.SNES().create(comm=problem.dm.comm)
 
@@ -201,12 +194,12 @@ class NonlinearVariationalSolver(OptionsManager):
         ctx.set_jacobian(self.snes)
         ctx.set_nullspace(nullspace, problem.J.arguments()[0].function_space()._ises,
                           transpose=False, near=False)
-        ctx.set_nullspace(nullspace_T, problem.J.arguments()[1].function_space()._ises,
+        ctx.set_nullspace(transpose_nullspace, problem.J.arguments()[1].function_space()._ises,
                           transpose=True, near=False)
         ctx.set_nullspace(near_nullspace, problem.J.arguments()[0].function_space()._ises,
                           transpose=False, near=True)
         ctx._nullspace = nullspace
-        ctx._nullspace_T = nullspace_T
+        ctx._nullspace_T = transpose_nullspace
         ctx._near_nullspace = near_nullspace
 
         # Set from options now, so that people who want to noodle with
@@ -309,30 +302,7 @@ class LinearVariationalProblem(NonlinearVariationalProblem):
 class LinearVariationalSolver(NonlinearVariationalSolver):
     r"""Solves a :class:`LinearVariationalProblem`."""
 
-    def __init__(self, *args, **kwargs):
-        r"""
-        :arg problem: A :class:`LinearVariationalProblem` to solve.
-        :kwarg solver_parameters: Solver parameters to pass to PETSc.
-            This should be a dict mapping PETSc options to values.
-        :kwarg nullspace: an optional :class:`.VectorSpaceBasis` (or
-               :class:`.MixedVectorSpaceBasis`) spanning the null
-               space of the operator.
-        :kwarg transpose_nullspace: as for the nullspace, but used to
-               make the right hand side consistent.
-        :kwarg options_prefix: an optional prefix used to distinguish
-               PETSc options.  If not provided a unique prefix will be
-               created.  Use this option if you want to pass options
-               to the solver from the command line in addition to
-               through the ``solver_parameters`` dict.
-        :kwarg appctx: A dictionary containing application context that
-               is passed to the preconditioner if matrix-free.
-        """
-        parameters = {}
-        parameters.update(kwargs.get("solver_parameters", {}))
-        parameters.setdefault('snes_type', 'ksponly')
-        parameters.setdefault('ksp_rtol', 1.0e-7)
-        kwargs["solver_parameters"] = parameters
-        super(LinearVariationalSolver, self).__init__(*args, **kwargs)
+    DEFAULT_SNES_PARAMETERS = {"snes_type": "ksponly"}
 
     def invalidate_jacobian(self):
         r"""
