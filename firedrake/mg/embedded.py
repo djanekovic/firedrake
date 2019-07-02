@@ -56,7 +56,7 @@ class SingleTransfer(object):
     def __init__(self, element, use_fortin_interpolation=True):
         degree = element.degree()
         cell = element.cell()
-        family = "DQ" if cell in (ufl.quadrilateral, ufl.hexahedron) else "DG"
+        family = "DQ" if cell in (ufl.quadrilateral,) else "DG"
         shape = element.value_shape()
         if len(shape) == 0:
             DG = ufl.FiniteElement(family, cell, degree)
