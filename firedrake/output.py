@@ -357,7 +357,7 @@ class File(object):
         if cg:
             family = "Lagrange"
         else:
-            if function.function_space().mesh().ufl_cell() in (ufl.quadrilateral, ufl.hexahedron):
+            if function.function_space().mesh().ufl_cell() in (ufl.quadrilateral,):
                 family = "DQ"
             else:
                 family = "Discontinuous Lagrange"
