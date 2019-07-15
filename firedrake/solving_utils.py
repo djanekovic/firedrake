@@ -404,7 +404,7 @@ class _SNESContext(object):
             _, _, inject = dmhooks.get_transfer_operators(fine._x.function_space().dm)
             inject(fine._x, ctx._x)
 
-            for bc in itertools.chain(*ctx._problem.bcs):
+            for bc in chain(*ctx._problem.bcs):
                 if isinstance(bc, DirichletBC):
                     bc.apply(ctx._x)
 
