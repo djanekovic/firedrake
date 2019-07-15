@@ -48,8 +48,9 @@ def set_defaults(solver_parameters, arguments, *defaults):
         return solver_parameters.copy()
 
     parameters = dict(chain.from_iterable(d.items() for d in defaults))
-    if any(isinstance(V, fsi.RealFunctionSpace)
-           for V in chain.from_iterable(a.function_space() for a in arguments)):
+
+    if any(V.ufl_element().family() == "Real"
+           for a in arguments for V in a.function_space()):
         test, trial = arguments
         if test.function_space() != trial.function_space():
             # Don't know what to do here. How did it happen?
@@ -63,9 +64,9 @@ def set_defaults(solver_parameters, arguments, *defaults):
             else:
                 fields.append(i)
         if len(fields) == 0:
-            # Just reals, GMRES+Jacobi
+            # Just reals, GMRES
             opts = {"ksp_type": "gmres",
-                    "pc_type": "jacobi"}
+                    "pc_type": "none"}
             parameters.update(opts)
         else:
             warning("Real block detected, generating Schur complement elimination PC")
@@ -85,7 +86,7 @@ def set_defaults(solver_parameters, arguments, *defaults):
                     },
                     "fieldsplit_1": {
                         "ksp_type": "gmres",
-                        "pc_type": "jacobi",
+                        "pc_type": "none",
                     }}
             parameters.update(opts)
         return parameters
